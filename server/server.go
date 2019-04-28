@@ -11,140 +11,173 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type ClientManager struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-}
-
-type Client struct {
-	socket   *websocket.Conn
-	send     chan []byte
-	username string
-}
-
-type Message struct {
-	Sender    string `json:"sender,omitempty"`
-	Recipient string `json:"recipient,omitempty"`
-	Content   string `json:"content,omitempty"`
-	username  string `json:"username,omitempty"`
-}
-
-var manager = ClientManager{
-	broadcast:  make(chan []byte),
-	register:   make(chan *Client),
-	unregister: make(chan *Client),
-	clients:    make(map[*Client]bool),
-}
-
-type post struct {
-	Username string `json:"username,omitempty"`
+type Post struct {
+	UserName string `json:"username,omitempty"`
 	Message  string `json:"message"`
 	Time     string `json:"time"`
 }
 
-func (manager *ClientManager) start() {
-	for {
-		select {
-		case conn := <-manager.register:
-			manager.clients[conn] = true
-			jsonMessage, _ := json.Marshal(&post{Username: conn.username, Time: time.Now().Format("2006-01-02 15:04:05"), Message: "entry room"})
-			manager.send(jsonMessage, conn)
-		case conn := <-manager.unregister:
-			if _, ok := manager.clients[conn]; ok {
-				close(conn.send)
-				delete(manager.clients, conn)
-				jsonMessage, _ := json.Marshal(&post{Username: conn.username, Time: time.Now().Format("2006-01-02 15:04:05"), Message: "leave room"})
-				manager.send(jsonMessage, conn)
-			}
-		case message := <-manager.broadcast:
-			for conn := range manager.clients {
-				select {
-				case conn.send <- message:
-				default:
-					close(conn.send)
-					delete(manager.clients, conn)
-				}
-			}
-		}
-	}
+type Client interface {
+	Send(post Post) Client
+	GetUserName() string
+	SetClientManager(manager ClientManager) Client
 }
 
-func (manager *ClientManager) send(message []byte, ignore *Client) {
-	for conn := range manager.clients {
-		if conn != ignore {
-			conn.send <- message
-		}
-	}
+func NewClient(conn *websocket.Conn, userName string) Client {
+	return &BaseClient{conn: conn, send: make(chan Post), userName: userName}
 }
 
-func (c *Client) read() {
+type BaseClient struct {
+	conn     *websocket.Conn
+	manager  ClientManager
+	send     chan Post
+	userName string
+}
+
+func (c *BaseClient) handleClient() {
 	defer func() {
-		manager.unregister <- c
-		c.socket.Close()
+		c.manager.Logout(c)
+		c.conn.Close()
+		close(c.send)
 	}()
 
 	for {
-		var p post
-		err := c.socket.ReadJSON(&p)
+		var post Post
+		err := c.conn.ReadJSON(&post)
 		if err != nil {
-			manager.unregister <- c
-			c.socket.Close()
 			fmt.Println("err", err)
 			break
 		}
-		jsonMessage, _ := json.Marshal(&post{Username: p.Username, Message: p.Message, Time: p.Time})
-		manager.broadcast <- jsonMessage
+		c.manager.Send(c, post)
 	}
 }
 
-func (c *Client) write() {
+func (c *BaseClient) handleServer() {
 	defer func() {
-		c.socket.Close()
+		c.conn.Close()
 	}()
 
 	for {
 		select {
-		case message, ok := <-c.send:
+		case post, ok := <-c.send:
 			if !ok {
-				c.socket.WriteMessage(websocket.CloseMessage, []byte{})
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			c.socket.WriteMessage(websocket.TextMessage, message)
+			message, _ := json.Marshal(&post)
+			c.conn.WriteMessage(websocket.TextMessage, message)
 		}
 	}
+}
+
+func (c *BaseClient) Send(post Post) Client {
+	c.send <- post
+	return c
+}
+
+func (c *BaseClient) GetUserName() string {
+	return c.userName
+}
+
+func (c *BaseClient) SetClientManager(manager ClientManager) Client {
+	c.manager = manager
+	go c.handleClient()
+	go c.handleServer()
+	return c
+}
+
+type ClientManager interface {
+	Login(client Client) ClientManager
+	Logout(client Client) ClientManager
+	Send(client Client, post Post) ClientManager
+	HandleMessage()
+}
+
+func NewClientManager() ClientManager {
+	return &BaseClientManager{
+		broadcaster: make(chan Post),
+		register:    make(chan Client),
+		unregister:  make(chan Client),
+		clients:     make(map[Client]bool)}
+}
+
+type BaseClientManager struct {
+	clients     map[Client]bool
+	broadcaster chan Post
+	register    chan Client
+	unregister  chan Client
+}
+
+func (m *BaseClientManager) HandleMessage() {
+	for {
+		select {
+		case client := <-m.register:
+			client.SetClientManager(m)
+			m.clients[client] = true
+			post := Post{UserName: client.GetUserName(), Time: time.Now().Format("2006-01-02 15:04:05"), Message: "entry room"}
+			m.broadcast(post, client)
+		case client := <-m.unregister:
+			if _, ok := m.clients[client]; ok {
+				delete(m.clients, client)
+				post := Post{UserName: client.GetUserName(), Time: time.Now().Format("2006-01-02 15:04:05"), Message: "leave room"}
+				m.broadcast(post, client)
+			}
+		case post := <-m.broadcaster:
+			m.broadcast(post, nil)
+		}
+	}
+}
+
+func (m *BaseClientManager) broadcast(post Post, ignore Client) {
+	for client := range m.clients {
+		if client != ignore {
+			client.Send(post)
+		}
+	}
+}
+
+func (m *BaseClientManager) Login(client Client) ClientManager {
+	m.register <- client
+	return m
+}
+
+func (m *BaseClientManager) Logout(client Client) ClientManager {
+	m.unregister <- client
+	return m
+}
+
+func (m *BaseClientManager) Send(client Client, post Post) ClientManager {
+	m.broadcaster <- post
+	return m
 }
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("ip:")
+
 	scanner.Scan()
 	ip := scanner.Text()
 	if ip == "" {
 		ip = "127.0.0.1:12345"
 	}
+
 	fmt.Println("Starting application...")
 	fmt.Println(ip)
-	go manager.start()
-	http.HandleFunc("/ws", wsPage)
+
+	manager := NewClientManager()
+	go manager.HandleMessage()
+
+	http.HandleFunc("/ws", func(res http.ResponseWriter, req *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}).Upgrade(res, req, nil)
+		if err != nil {
+			http.NotFound(res, req)
+			return
+		}
+		manager.Login(NewClient(conn, req.Header.Get("username")))
+	})
+
 	err := http.ListenAndServe(ip, nil)
 	if err != nil {
 		fmt.Println(err)
 	}
-
-}
-
-func wsPage(res http.ResponseWriter, req *http.Request) {
-	conn, error := (&websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}).Upgrade(res, req, nil)
-	if error != nil {
-		http.NotFound(res, req)
-		return
-	}
-
-	client := &Client{socket: conn, send: make(chan []byte), username: req.Header.Get("username")}
-	manager.register <- client
-
-	go client.read()
-	go client.write()
 }
