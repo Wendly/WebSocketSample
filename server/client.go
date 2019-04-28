@@ -12,7 +12,7 @@ import (
 type Client interface {
 	Send(post model.Post) Client
 	GetUserName() string
-	SetClientManager(manager ClientManager) Client
+	OnLogin(manager ClientManager) Client
 }
 
 func NewClient(conn *websocket.Conn, userName string) Client {
@@ -71,7 +71,7 @@ func (c *BaseClient) GetUserName() string {
 	return c.userName
 }
 
-func (c *BaseClient) SetClientManager(manager ClientManager) Client {
+func (c *BaseClient) OnLogin(manager ClientManager) Client {
 	c.manager = manager
 	go c.handleClient()
 	go c.handleServer()

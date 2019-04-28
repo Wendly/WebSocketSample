@@ -40,7 +40,7 @@ func (m *BaseClientManager) HandleMessage() {
 }
 
 func (m *BaseClientManager) onLogin(client Client) {
-	client.SetClientManager(m)
+	client.OnLogin(m)
 	m.clients[client] = true
 	m.broadcast(model.NewPost(client.GetUserName(), "entry room"), client)
 }
