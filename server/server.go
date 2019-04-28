@@ -116,18 +116,26 @@ func (m *BaseClientManager) HandleMessage() {
 	for {
 		select {
 		case client := <-m.register:
-			client.SetClientManager(m)
-			m.clients[client] = true
-			m.broadcast(NewPost(client.GetUserName(), "entry room"), client)
+			m.onLogin(client)
 		case client := <-m.unregister:
-			if _, ok := m.clients[client]; ok {
-				delete(m.clients, client)
-				m.broadcast(NewPost(client.GetUserName(), "leave room"), client)
-				m.broadcast(post, client)
-			}
+			m.onLogout(client)
 		case post := <-m.broadcaster:
 			m.broadcast(post, nil)
 		}
+	}
+}
+
+func (m *BaseClientManager) onLogin(client Client) {
+	client.SetClientManager(m)
+	m.clients[client] = true
+	m.broadcast(NewPost(client.GetUserName(), "entry room"), client)
+}
+
+func (m *BaseClientManager) onLogout(client Client) {
+	if _, ok := m.clients[client]; ok {
+		delete(m.clients, client)
+		m.broadcast(NewPost(client.GetUserName(), "leave room"), client)
+		m.broadcast(post, client)
 	}
 }
 
