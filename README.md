@@ -6,11 +6,15 @@ go get -u github.com/gorilla/websocket
 
 go get -u github.com/marcusolsson/tui-go
 ```
+install
+```
+git clone repo "$GOPATH/src/github.com/YangChing/WebSocketSample"
+```
 server
 ```
-go run server/server.go
+go run server/*.go
 ```
 client
 ```
-go run client/client.go
+go run client/*.go
 ```
