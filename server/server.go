@@ -6,35 +6,25 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/YangChing/WebSocketSample/server/model"
 )
 
-type Post struct {
-	UserName string `json:"username,omitempty"`
-	Message  string `json:"message"`
-	Time     string `json:"time"`
-}
-
-func NewPost(name string, message string) Post {
-	return Post{name, message, time.Now().Format("2006-01-02 15:04:05")}
-}
-
 type Client interface {
-	Send(post Post) Client
+	Send(post model.Post) Client
 	GetUserName() string
 	SetClientManager(manager ClientManager) Client
 }
 
 func NewClient(conn *websocket.Conn, userName string) Client {
-	return &BaseClient{conn: conn, send: make(chan Post), userName: userName}
+	return &BaseClient{conn: conn, send: make(chan model.Post), userName: userName}
 }
 
 type BaseClient struct {
 	conn     *websocket.Conn
 	manager  ClientManager
-	send     chan Post
+	send     chan model.Post
 	userName string
 }
 
@@ -46,7 +36,7 @@ func (c *BaseClient) handleClient() {
 	}()
 
 	for {
-		var post Post
+		var post model.Post
 		err := c.conn.ReadJSON(&post)
 		if err != nil {
 			fmt.Println("err", err)
@@ -74,7 +64,7 @@ func (c *BaseClient) handleServer() {
 	}
 }
 
-func (c *BaseClient) Send(post Post) Client {
+func (c *BaseClient) Send(post model.Post) Client {
 	c.send <- post
 	return c
 }
@@ -93,13 +83,13 @@ func (c *BaseClient) SetClientManager(manager ClientManager) Client {
 type ClientManager interface {
 	Login(client Client) ClientManager
 	Logout(client Client) ClientManager
-	Send(client Client, post Post) ClientManager
+	Send(client Client, post model.Post) ClientManager
 	HandleMessage()
 }
 
 func NewClientManager() ClientManager {
 	return &BaseClientManager{
-		broadcaster: make(chan Post),
+		broadcaster: make(chan model.Post),
 		register:    make(chan Client),
 		unregister:  make(chan Client),
 		clients:     make(map[Client]bool)}
@@ -107,7 +97,7 @@ func NewClientManager() ClientManager {
 
 type BaseClientManager struct {
 	clients     map[Client]bool
-	broadcaster chan Post
+	broadcaster chan model.Post
 	register    chan Client
 	unregister  chan Client
 }
@@ -128,18 +118,17 @@ func (m *BaseClientManager) HandleMessage() {
 func (m *BaseClientManager) onLogin(client Client) {
 	client.SetClientManager(m)
 	m.clients[client] = true
-	m.broadcast(NewPost(client.GetUserName(), "entry room"), client)
+	m.broadcast(model.NewPost(client.GetUserName(), "entry room"), client)
 }
 
 func (m *BaseClientManager) onLogout(client Client) {
 	if _, ok := m.clients[client]; ok {
 		delete(m.clients, client)
-		m.broadcast(NewPost(client.GetUserName(), "leave room"), client)
-		m.broadcast(post, client)
+		m.broadcast(model.NewPost(client.GetUserName(), "leave room"), client)
 	}
 }
 
-func (m *BaseClientManager) broadcast(post Post, ignore Client) {
+func (m *BaseClientManager) broadcast(post model.Post, ignore Client) {
 	for client := range m.clients {
 		if client != ignore {
 			client.Send(post)
@@ -157,7 +146,7 @@ func (m *BaseClientManager) Logout(client Client) ClientManager {
 	return m
 }
 
-func (m *BaseClientManager) Send(client Client, post Post) ClientManager {
+func (m *BaseClientManager) Send(client Client, post model.Post) ClientManager {
 	m.broadcaster <- post
 	return m
 }
