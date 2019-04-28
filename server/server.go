@@ -17,6 +17,10 @@ type Post struct {
 	Time     string `json:"time"`
 }
 
+func NewPost(name string, message string) Post {
+	return Post{name, message, time.Now().Format("2006-01-02 15:04:05")}
+}
+
 type Client interface {
 	Send(post Post) Client
 	GetUserName() string
@@ -114,12 +118,11 @@ func (m *BaseClientManager) HandleMessage() {
 		case client := <-m.register:
 			client.SetClientManager(m)
 			m.clients[client] = true
-			post := Post{UserName: client.GetUserName(), Time: time.Now().Format("2006-01-02 15:04:05"), Message: "entry room"}
-			m.broadcast(post, client)
+			m.broadcast(NewPost(client.GetUserName(), "entry room"), client)
 		case client := <-m.unregister:
 			if _, ok := m.clients[client]; ok {
 				delete(m.clients, client)
-				post := Post{UserName: client.GetUserName(), Time: time.Now().Format("2006-01-02 15:04:05"), Message: "leave room"}
+				m.broadcast(NewPost(client.GetUserName(), "leave room"), client)
 				m.broadcast(post, client)
 			}
 		case post := <-m.broadcaster:
